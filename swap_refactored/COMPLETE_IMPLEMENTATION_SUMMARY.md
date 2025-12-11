@@ -172,6 +172,59 @@ Worker::runAll();
 
 ## 其他重要改进
 
+### 0. K线定时器自动拉取修复 ⚠️ **最新修复**
+
+**问题**: 5分钟及其他K线更新很慢，需要几秒钟才更新
+
+**原因**:
+- 非1分钟K线进程设置 `$isget = false`，不拉取历史数据
+- 依赖1分钟进程提供缓存
+- 如果缓存为空，定时器直接返回，无法更新价格
+
+**解决**:
+- 为所有8个非1分钟K线进程添加自动拉取机制
+- 使用 `$history_fetched` 标志跟踪是否已拉取
+- 定时器检测到缓存为空时，自动调用 `getHistory()` 拉取本周期历史数据
+- 只拉取一次，避免重复请求
+
+**代码示例**:
+```php
+$history_fetched = false; // 标记是否已拉取历史数据
+Timer::add(1, function() use ($ok, &$history_fetched) {
+    // ...获取缓存...
+
+    // 如果缓存为空且还没拉取过历史数据，尝试拉取
+    if ((!$kline_book || empty($kline_book)) && !$history_fetched) {
+        echo "[自动拉取] 5分钟K线缓存为空，自动拉取历史数据...\n";
+        $ok->getHistory($ok->period);
+        $history_fetched = true;
+        return;
+    }
+
+    // ...更新价格...
+});
+```
+
+**优势**:
+- ✅ 所有K线周期都能秒级更新
+- ✅ 不依赖1分钟进程启动顺序
+- ✅ 缓存清空时自动恢复
+- ✅ 每个进程独立自治
+
+**修改的8个文件**:
+- swap_kline_5min.php
+- swap_kline_15min.php
+- swap_kline_30min.php
+- swap_kline_60min.php
+- swap_kline_4hour.php
+- swap_kline_1day.php
+- swap_kline_1week.php
+- swap_kline_1mon.php
+
+**文档**: `KLINE_AUTO_FETCH_FIX.md`
+
+---
+
 ### 1. WebSocket 推送优化
 
 **问题**: 原代码有 50% 消息过滤逻辑
