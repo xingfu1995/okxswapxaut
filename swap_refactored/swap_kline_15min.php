@@ -97,7 +97,8 @@ $worker->onWorkerStart = function ($worker) {
     echo "[启动] 15分钟K线数据采集服务已启动\n";
 
     // ========== 添加定时器：每秒更新当前K线价格 ==========
-    Timer::add(1, function() use ($ok) {
+    $history_fetched = false; // 标记是否已拉取历史数据
+    Timer::add(1, function() use ($ok, &$history_fetched) {
         try {
             // 从 Redis 获取最新市场价格
             $market_data = Cache::store('redis')->get('swap:XAUT_detail');
@@ -108,6 +109,14 @@ $worker->onWorkerStart = function ($worker) {
             $period = $ok->periods[$ok->period]['period'];
             $kline_book_key = 'swap:' . $ok->symbol . '_kline_book_' . $period;
             $kline_book = Cache::store('redis')->get($kline_book_key);
+
+            // 如果缓存为空且还没拉取过历史数据，尝试拉取
+            if ((!$kline_book || empty($kline_book)) && !$history_fetched) {
+                echo "[自动拉取] 15分钟K线缓存为空，自动拉取历史数据...\n";
+                $ok->getHistory($ok->period);
+                $history_fetched = true;
+                return;
+            }
 
             if (!$kline_book || empty($kline_book)) {
                 return;
