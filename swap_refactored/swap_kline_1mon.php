@@ -97,4 +97,63 @@ $worker->onWorkerStart = function ($worker) {
     echo "[启动] 1月K线数据采集服务已启动\n";
 };
 
+    // ========== 添加定时器：每秒更新当前K线价格 ==========
+    Timer::add(1, function() use ($ok) {
+        try {
+            // 从 Redis 获取最新市场价格
+            $market_data = Cache::store('redis')->get('swap:XAUT_detail');
+            if (!$market_data) {
+                return;
+            }
+
+            $period = $ok->periods[$ok->period]['period'];
+            $kline_book_key = 'swap:' . $ok->symbol . '_kline_book_' . $period;
+            $kline_book = Cache::store('redis')->get($kline_book_key);
+
+            if (!$kline_book || empty($kline_book)) {
+                return;
+            }
+
+            // 获取当前这根K线
+            $current_kline = end($kline_book);
+            $period_seconds = $ok->periods[$ok->period]['seconds'];
+            $current_timestamp = floor(time() / $period_seconds) * $period_seconds;
+
+            // 只更新当前这根K线
+            if ($current_kline['id'] == $current_timestamp) {
+                // 更新收盘价为最新市场价
+                $current_kline['close'] = floatval($market_data['close']);
+
+                // 更新最高价和最低价
+                if ($current_kline['close'] > $current_kline['high']) {
+                    $current_kline['high'] = $current_kline['close'];
+                }
+                if ($current_kline['close'] < $current_kline['low']) {
+                    $current_kline['low'] = $current_kline['close'];
+                }
+
+                // 更新缓存
+                $kline_book[count($kline_book) - 1] = $current_kline;
+                Cache::store('redis')->put($kline_book_key, $kline_book, 86400 * 7);
+
+                // 更新当前K线缓存
+                Cache::store('redis')->put('swap_kline_now_' . $period, $current_kline, 3600);
+
+                // 推送给客户端
+                $group_id = 'swapKline_' . $ok->symbol . '_' . $period;
+                if (Gateway::getClientIdCountByGroup($group_id) > 0) {
+                    Gateway::sendToGroup($group_id, json_encode([
+                        'code' => 0,
+                        'msg' => 'success',
+                        'data' => $current_kline,
+                        'sub' => $group_id,
+                        'type' => 'dynamic'
+                    ]));
+                }
+            }
+        } catch (\Exception $e) {
+            echo "[定时器异常] " . $e->getMessage() . "\n";
+        }
+    });
+};
 Worker::runAll();
