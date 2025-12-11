@@ -83,7 +83,7 @@ $worker->onWorkerStart = function ($worker) {
                 return [
                     'id' => (string)Str::uuid(),
                     'amount' => $item[1],
-                    'price' => round(floatval($item[0]) + $difference, 4)
+                    'price' => round(floatval($item[0]) + $difference, 2)
                 ];
             })->toArray();
 
@@ -92,7 +92,7 @@ $worker->onWorkerStart = function ($worker) {
                 return [
                     'id' => (string)Str::uuid(),
                     'amount' => $item[1],
-                    'price' => round(floatval($item[0]) + $difference, 4)
+                    'price' => round(floatval($item[0]) + $difference, 2)
                 ];
             })->toArray();
 

@@ -153,10 +153,10 @@ class OK
             $cache_data2 = collect($data['data'])->map(function ($v) use ($difference) {
                 return [
                     'id' => intval($v[0] / 1000),
-                    'open' => round(floatval($v[1]) + $difference, 4),
-                    'high' => round(floatval($v[2]) + $difference, 4),
-                    'low' => round(floatval($v[3]) + $difference, 4),
-                    'close' => round(floatval($v[4]) + $difference, 4),
+                    'open' => round(floatval($v[1]) + $difference, 2),
+                    'high' => round(floatval($v[2]) + $difference, 2),
+                    'low' => round(floatval($v[3]) + $difference, 2),
+                    'close' => round(floatval($v[4]) + $difference, 2),
                     'amount' => floatval($v[5]),
                     'vol' => round(floatval($v[7]), 4),
                     'time' => intval($v[0] / 1000),
@@ -282,10 +282,10 @@ class OK
                 // 应用差值
                 $cache_data = [
                     'id' => intval($v['0'] / 1000),
-                    'open' => round(floatval($v[1]) + $difference, 4),
-                    'high' => round(floatval($v[2]) + $difference, 4),
-                    'low' => round(floatval($v[3]) + $difference, 4),
-                    'close' => round(floatval($v[4]) + $difference, 4),
+                    'open' => round(floatval($v[1]) + $difference, 2),
+                    'high' => round(floatval($v[2]) + $difference, 2),
+                    'low' => round(floatval($v[3]) + $difference, 2),
+                    'close' => round(floatval($v[4]) + $difference, 2),
                     'amount' => floatval($v[5]),
                     'vol' => round(floatval($v[7]), 4),
                     'time' => intval($v['0'] / 1000),

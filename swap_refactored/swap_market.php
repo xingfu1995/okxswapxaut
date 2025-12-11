@@ -169,10 +169,10 @@ $worker->onWorkerStart = function ($worker) {
             // ========== 第4步：应用差值到市场数据 ==========
             $adjusted_data = [
                 'id' => $okx_original['id'],
-                'close' => $okx_original['close'] + $difference,
-                'open' => $okx_original['open'] + $difference,
-                'high' => $okx_original['high'] + $difference,
-                'low' => $okx_original['low'] + $difference,
+                'close' => round($okx_original['close'] + $difference, 2),
+                'open' => round($okx_original['open'] + $difference, 2),
+                'high' => round($okx_original['high'] + $difference, 2),
+                'low' => round($okx_original['low'] + $difference, 2),
                 'vol' => $okx_original['vol'],
                 'amount' => $okx_original['amount'],
             ];

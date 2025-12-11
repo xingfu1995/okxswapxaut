@@ -82,7 +82,7 @@ $worker->onWorkerStart = function ($worker) {
                 'ts' => $resdata['ts'],
                 'tradeId' => $resdata['tradeId'],
                 'amount' => $resdata['sz'],
-                'price' => floatval($resdata['px']) + $difference,  // 应用差值
+                'price' => round(floatval($resdata['px']) + $difference, 2),  // 应用差值，保留2位小数
                 'direction' => $resdata['side'],
             ];
 
