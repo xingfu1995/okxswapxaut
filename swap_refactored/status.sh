@@ -28,8 +28,40 @@ echo "[4] 成交数据处理服务"
 php swap_trade.php status
 echo ""
 
-echo "[5] K线数据采集服务"
-php swap_kline.php status
+echo "[5] 1分钟K线数据采集服务"
+php swap_kline_1min.php status
+echo ""
+
+echo "[6] 5分钟K线数据采集服务"
+php swap_kline_5min.php status
+echo ""
+
+echo "[7] 15分钟K线数据采集服务"
+php swap_kline_15min.php status
+echo ""
+
+echo "[8] 30分钟K线数据采集服务"
+php swap_kline_30min.php status
+echo ""
+
+echo "[9] 1小时K线数据采集服务"
+php swap_kline_60min.php status
+echo ""
+
+echo "[10] 4小时K线数据采集服务"
+php swap_kline_4hour.php status
+echo ""
+
+echo "[11] 1天K线数据采集服务"
+php swap_kline_1day.php status
+echo ""
+
+echo "[12] 1周K线数据采集服务"
+php swap_kline_1week.php status
+echo ""
+
+echo "[13] 1月K线数据采集服务"
+php swap_kline_1mon.php status
 echo ""
 
 echo "========================================="
