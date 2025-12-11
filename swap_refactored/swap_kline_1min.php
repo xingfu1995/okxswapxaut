@@ -27,7 +27,13 @@ $worker->onWorkerStart = function ($worker) {
     // 初始化 1分钟周期
     $period = '1m';
     $symbol = "XAUT";
-    $ok = new OK($period, $symbol, true, false); // 不拉取历史数据，避免重复
+
+    // ⚠️ 重要：1分钟进程负责拉取所有周期的历史数据
+    // 等待3秒确保 swap_market.php 已经计算并存储了差值
+    echo "[等待] 等待 3 秒以确保差值已计算...\n";
+    sleep(3);
+
+    $ok = new OK($period, $symbol, true, true); // true = 拉取所有周期历史数据
     $onConnect = $ok->onConnectParams($period);  // 只订阅当前周期
 
     // WebSocket 协议别名
