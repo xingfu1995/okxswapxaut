@@ -6,15 +6,25 @@
  */
 
 use \GatewayWorker\Lib\Gateway;
+use \Workerman\Lib\Timer;
 
 class Events
 {
+    /**
+     * 存储客户端的心跳信息
+     * 格式: [client_id => last_pong_time]
+     */
+    private static $heartbeats = [];
+
     /**
      * 当客户端连接时触发
      */
     public static function onConnect($client_id)
     {
         echo "[连接] 客户端 $client_id 已连接\n";
+
+        // 初始化心跳时间
+        self::$heartbeats[$client_id] = time();
     }
 
     /**
@@ -34,15 +44,12 @@ class Events
                 return;
             }
 
-            // 处理心跳 ping
-            if ($data['cmd'] === 'ping') {
-                echo "[心跳] 收到客户端 $client_id 的 ping\n";
+            // 处理心跳 pong 回复
+            if ($data['cmd'] === 'pong') {
+                echo "[心跳] 收到客户端 $client_id 的 pong\n";
 
-                // 回复 pong
-                Gateway::sendToClient($client_id, json_encode([
-                    'cmd' => 'pong',
-                    'timestamp' => time()
-                ]));
+                // 更新该客户端的最后心跳时间
+                self::$heartbeats[$client_id] = time();
 
                 return;
             }
@@ -99,6 +106,11 @@ class Events
     public static function onClose($client_id)
     {
         echo "[断开] 客户端 $client_id 已断开\n";
+
+        // 清理心跳记录
+        if (isset(self::$heartbeats[$client_id])) {
+            unset(self::$heartbeats[$client_id]);
+        }
     }
 
     /**
@@ -107,6 +119,49 @@ class Events
     public static function onWorkerStart($worker)
     {
         echo "[启动] Gateway Worker #{$worker->id} 已启动\n";
+
+        // 只在第一个 Worker 进程中启动心跳定时器，避免重复
+        if ($worker->id === 0) {
+            // 每 20 秒向所有客户端发送一次 ping
+            Timer::add(20, function() {
+                $client_list = Gateway::getAllClientIdList();
+
+                if (empty($client_list)) {
+                    return;
+                }
+
+                $now = time();
+                $timeout = 60; // 60秒未收到pong则判定为超时
+
+                foreach ($client_list as $client_id) {
+                    // 检查心跳超时
+                    if (isset(self::$heartbeats[$client_id])) {
+                        $last_pong_time = self::$heartbeats[$client_id];
+
+                        // 如果超过60秒未收到pong，断开连接
+                        if ($now - $last_pong_time > $timeout) {
+                            echo "[心跳超时] 客户端 $client_id 超时，断开连接\n";
+                            Gateway::closeClient($client_id);
+                            unset(self::$heartbeats[$client_id]);
+                            continue;
+                        }
+                    }
+
+                    // 发送 ping
+                    try {
+                        Gateway::sendToClient($client_id, json_encode([
+                            'cmd' => 'ping',
+                            'timestamp' => $now
+                        ]));
+                        echo "[心跳] 向客户端 $client_id 发送 ping\n";
+                    } catch (\Exception $e) {
+                        echo "[心跳错误] 向客户端 $client_id 发送 ping 失败: " . $e->getMessage() . "\n";
+                    }
+                }
+            });
+
+            echo "[心跳] 心跳定时器已启动，每 20 秒发送一次 ping\n";
+        }
     }
 
     /**
