@@ -12,13 +12,20 @@
 
 ### ✅ 任务 1: WebSocket 心跳机制
 
-**需求**: 前端发送 `{"cmd":"ping"}`, 服务端回复 `{"cmd":"pong"}`
+**需求**: **服务端主动发送** `{"cmd":"ping"}`, **客户端回复** `{"cmd":"pong"}`
 
 **实现**:
 - 创建 `Events.php` 事件处理类
-- 实现 ping/pong 心跳机制
+- 服务端每 20 秒主动向所有客户端发送 ping
+- 客户端必须回复 pong，否则 60 秒后断开连接
 - 支持频道订阅/取消订阅
 - 详细文档: `HEARTBEAT_IMPLEMENTATION.md`
+
+**心跳机制**:
+- 定时器：每 20 秒发送 `{"cmd":"ping","timestamp":xxx}` 给所有客户端
+- 客户端必须回复：`{"cmd":"pong"}`
+- 超时检测：60 秒未收到 pong 则断开连接
+- 自动清理：断开时清除心跳记录
 
 **文件**:
 - `swap_refactored/Events.php` (新建)
@@ -26,8 +33,14 @@
 **测试方法**:
 ```bash
 wscat -c ws://127.0.0.1:8282
-> {"cmd":"ping"}
-< {"cmd":"pong","timestamp":1702345678}
+
+# 连接后自动收到服务端的 ping
+< {"cmd":"ping","timestamp":1702345678}
+
+# 客户端必须回复 pong
+> {"cmd":"pong"}
+
+# 每 20 秒重复
 ```
 
 ---
