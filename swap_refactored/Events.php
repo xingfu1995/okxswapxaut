@@ -1,0 +1,119 @@
+<?php
+/**
+ * Gateway Events 事件处理类
+ *
+ * 处理客户端的连接、消息、断开等事件
+ */
+
+use \GatewayWorker\Lib\Gateway;
+
+class Events
+{
+    /**
+     * 当客户端连接时触发
+     */
+    public static function onConnect($client_id)
+    {
+        echo "[连接] 客户端 $client_id 已连接\n";
+    }
+
+    /**
+     * 当客户端发送数据时触发
+     *
+     * @param int $client_id 客户端ID
+     * @param mixed $message 客户端发送的数据
+     */
+    public static function onMessage($client_id, $message)
+    {
+        try {
+            // 尝试解析 JSON 数据
+            $data = json_decode($message, true);
+
+            if (!$data || !isset($data['cmd'])) {
+                // 不是合法的 JSON 或没有 cmd 字段，忽略
+                return;
+            }
+
+            // 处理心跳 ping
+            if ($data['cmd'] === 'ping') {
+                echo "[心跳] 收到客户端 $client_id 的 ping\n";
+
+                // 回复 pong
+                Gateway::sendToClient($client_id, json_encode([
+                    'cmd' => 'pong',
+                    'timestamp' => time()
+                ]));
+
+                return;
+            }
+
+            // 处理订阅请求
+            if ($data['cmd'] === 'subscribe' && isset($data['channel'])) {
+                $channel = $data['channel'];
+
+                echo "[订阅] 客户端 $client_id 订阅频道: $channel\n";
+
+                // 将客户端加入对应的分组
+                Gateway::joinGroup($client_id, $channel);
+
+                // 发送订阅成功确认
+                Gateway::sendToClient($client_id, json_encode([
+                    'cmd' => 'subscribed',
+                    'channel' => $channel,
+                    'timestamp' => time()
+                ]));
+
+                return;
+            }
+
+            // 处理取消订阅请求
+            if ($data['cmd'] === 'unsubscribe' && isset($data['channel'])) {
+                $channel = $data['channel'];
+
+                echo "[取消订阅] 客户端 $client_id 取消订阅频道: $channel\n";
+
+                // 将客户端从分组中移除
+                Gateway::leaveGroup($client_id, $channel);
+
+                // 发送取消订阅确认
+                Gateway::sendToClient($client_id, json_encode([
+                    'cmd' => 'unsubscribed',
+                    'channel' => $channel,
+                    'timestamp' => time()
+                ]));
+
+                return;
+            }
+
+            // 其他未识别的命令
+            echo "[未知命令] 客户端 $client_id 发送: {$data['cmd']}\n";
+
+        } catch (\Exception $e) {
+            echo "[异常] 处理客户端 $client_id 消息时出错: " . $e->getMessage() . "\n";
+        }
+    }
+
+    /**
+     * 当客户端断开连接时触发
+     */
+    public static function onClose($client_id)
+    {
+        echo "[断开] 客户端 $client_id 已断开\n";
+    }
+
+    /**
+     * 当 Worker 启动时触发
+     */
+    public static function onWorkerStart($worker)
+    {
+        echo "[启动] Gateway Worker #{$worker->id} 已启动\n";
+    }
+
+    /**
+     * 当 Worker 停止时触发
+     */
+    public static function onWorkerStop($worker)
+    {
+        echo "[停止] Gateway Worker #{$worker->id} 已停止\n";
+    }
+}

@@ -95,7 +95,6 @@ $worker->onWorkerStart = function ($worker) {
 
     $con->connect();
     echo "[启动] 4小时K线数据采集服务已启动\n";
-};
 
     // ========== 添加定时器：每秒更新当前K线价格 ==========
     Timer::add(1, function() use ($ok) {
@@ -156,4 +155,5 @@ $worker->onWorkerStart = function ($worker) {
         }
     });
 };
+
 Worker::runAll();
