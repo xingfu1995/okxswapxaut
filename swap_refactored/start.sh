@@ -22,7 +22,15 @@ echo "========================================="
 # 关闭所有进程
 php get_forex_price.php stop 2>/dev/null
 php swap_market.php stop 2>/dev/null
-php swap_kline.php stop 2>/dev/null
+php swap_kline_1min.php stop 2>/dev/null
+php swap_kline_5min.php stop 2>/dev/null
+php swap_kline_15min.php stop 2>/dev/null
+php swap_kline_30min.php stop 2>/dev/null
+php swap_kline_60min.php stop 2>/dev/null
+php swap_kline_4hour.php stop 2>/dev/null
+php swap_kline_1day.php stop 2>/dev/null
+php swap_kline_1week.php stop 2>/dev/null
+php swap_kline_1mon.php stop 2>/dev/null
 php swap_depth.php stop 2>/dev/null
 php swap_trade.php stop 2>/dev/null
 
@@ -77,12 +85,92 @@ fi
 sleep 1
 
 echo ""
-echo "[5/5] 启动 K线数据采集服务..."
-php swap_kline.php start -d
+echo "[5/13] 启动 1分钟K线数据采集服务..."
+php swap_kline_1min.php start -d
 if [ $? -eq 0 ]; then
-    echo "✓ K线数据采集服务启动成功"
+    echo "✓ 1分钟K线数据采集服务启动成功"
 else
-    echo "✗ K线数据采集服务启动失败"
+    echo "✗ 1分钟K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[6/13] 启动 5分钟K线数据采集服务..."
+php swap_kline_5min.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 5分钟K线数据采集服务启动成功"
+else
+    echo "✗ 5分钟K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[7/13] 启动 15分钟K线数据采集服务..."
+php swap_kline_15min.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 15分钟K线数据采集服务启动成功"
+else
+    echo "✗ 15分钟K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[8/13] 启动 30分钟K线数据采集服务..."
+php swap_kline_30min.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 30分钟K线数据采集服务启动成功"
+else
+    echo "✗ 30分钟K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[9/13] 启动 1小时K线数据采集服务..."
+php swap_kline_60min.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 1小时K线数据采集服务启动成功"
+else
+    echo "✗ 1小时K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[10/13] 启动 4小时K线数据采集服务..."
+php swap_kline_4hour.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 4小时K线数据采集服务启动成功"
+else
+    echo "✗ 4小时K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[11/13] 启动 1天K线数据采集服务..."
+php swap_kline_1day.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 1天K线数据采集服务启动成功"
+else
+    echo "✗ 1天K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[12/13] 启动 1周K线数据采集服务..."
+php swap_kline_1week.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 1周K线数据采集服务启动成功"
+else
+    echo "✗ 1周K线数据采集服务启动失败"
+fi
+sleep 1
+
+echo ""
+echo "[13/13] 启动 1月K线数据采集服务..."
+php swap_kline_1mon.php start -d
+if [ $? -eq 0 ]; then
+    echo "✓ 1月K线数据采集服务启动成功"
+else
+    echo "✗ 1月K线数据采集服务启动失败"
 fi
 sleep 1
 
@@ -96,7 +184,15 @@ php get_forex_price.php status
 php swap_market.php status
 php swap_depth.php status
 php swap_trade.php status
-php swap_kline.php status
+php swap_kline_1min.php status
+php swap_kline_5min.php status
+php swap_kline_15min.php status
+php swap_kline_30min.php status
+php swap_kline_60min.php status
+php swap_kline_4hour.php status
+php swap_kline_1day.php status
+php swap_kline_1week.php status
+php swap_kline_1mon.php status
 
 echo ""
 echo "========================================="
