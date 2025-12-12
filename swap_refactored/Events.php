@@ -7,6 +7,7 @@
 
 use \GatewayWorker\Lib\Gateway;
 use \Workerman\Lib\Timer;
+use Illuminate\Support\Facades\Cache;
 
 class Events
 {
@@ -161,7 +162,93 @@ class Events
             });
 
             echo "[心跳] 心跳定时器已启动，每 20 秒发送一次 ping\n";
+
+            // ========== 添加市场列表推送定时器 ==========
+            // 每 1 秒推送一次市场列表数据
+            Timer::add(1, function() {
+                try {
+                    $market_data = self::getMarketList();
+
+                    if (empty($market_data)) {
+                        return;
+                    }
+
+                    $group_id = 'swapMarketList';
+
+                    // 检查是否有客户端订阅了这个频道
+                    if (Gateway::getClientIdCountByGroup($group_id) > 0) {
+                        $message = json_encode([
+                            'code' => 0,
+                            'msg' => 'success',
+                            'data' => $market_data,
+                            'sub' => $group_id
+                        ]);
+
+                        Gateway::sendToGroup($group_id, $message);
+                    }
+                } catch (\Exception $e) {
+                    echo "[市场列表异常] " . $e->getMessage() . "\n";
+                }
+            });
+
+            echo "[市场列表] 市场列表推送定时器已启动，每 1 秒推送一次\n";
         }
+    }
+
+    /**
+     * 获取市场列表数据
+     * 从 Redis 读取已应用差值的数据
+     */
+    private static function getMarketList()
+    {
+        $result = [];
+
+        // 只处理 XAUT
+        $symbol = 'XAUT';
+
+        try {
+            // 从 Redis 读取调整后的市场数据（已包含 FOREX 差值）
+            $detail = Cache::store('redis')->get('swap:' . $symbol . '_detail');
+
+            if (!$detail) {
+                echo "[市场列表] swap:{$symbol}_detail 数据不存在\n";
+                return $result;
+            }
+
+            // 读取1天K线数据用于计算24小时涨跌
+            $kline_1day = Cache::store('redis')->get('swap:' . $symbol . '_kline_book_1day');
+
+            // 组装市场列表数据
+            $item = [
+                'symbol' => $symbol,
+                'close' => round(floatval($detail['close']), 2),  // 当前价（已含差值）
+                'open' => round(floatval($detail['open']), 2),
+                'high' => round(floatval($detail['high']), 2),
+                'low' => round(floatval($detail['low']), 2),
+                'vol' => round(floatval($detail['vol']), 2),
+                'amount' => round(floatval($detail['amount']), 2),
+                'increase' => isset($detail['increase']) ? round(floatval($detail['increase']), 4) : 0,
+                'increaseStr' => isset($detail['increaseStr']) ? $detail['increaseStr'] : '0.00%',
+                'timestamp' => isset($detail['timestamp']) ? intval($detail['timestamp']) : time(),
+            ];
+
+            // 如果有1天K线数据，添加图表数据
+            if ($kline_1day && is_array($kline_1day)) {
+                $item['chart'] = array_map(function($k) {
+                    return [
+                        'id' => $k['id'],
+                        'close' => round(floatval($k['close']), 2),
+                    ];
+                }, array_slice($kline_1day, -24)); // 最近24条
+            }
+
+            $result[] = $item;
+
+        } catch (\Exception $e) {
+            echo "[市场列表异常] 处理 {$symbol} 时出错: " . $e->getMessage() . "\n";
+        }
+
+        return $result;
     }
 
     /**
