@@ -187,7 +187,11 @@ class Events
                     }
                     $cache_data['prices'] = $prices;
 
-                    Cache::store('redis')->put('swap:' . $coin1_symbol . '_detail', $cache_data);
+                    // XAUT 由 swap_refactored/swap_market.php 处理（应用 FOREX 差值），这里跳过
+                    if ($coin1_symbol != 'XAUT') {
+                        Cache::store('redis')->put('swap:' . $coin1_symbol . '_detail', $cache_data);
+                    }
+
                     if (!blank($cache_data2)) {
                         Cache::store('redis')->put('swap:trade_detail_' . $coin1_symbol, $cache_data);
 
