@@ -98,11 +98,16 @@ $worker->onWorkerStart = function ($worker) {
 
     // ========== 添加定时器：每秒更新当前K线价格 ==========
     $history_fetched = false; // 标记是否已拉取历史数据
-    Timer::add(1, function() use ($ok, &$history_fetched) {
+    $debug_counter = 0; // 调试计数器，只打印部分日志
+    Timer::add(1, function() use ($ok, &$history_fetched, &$debug_counter) {
         try {
+            $debug_counter++;
+            $should_debug = ($debug_counter % 10 == 0); // 每10秒打印一次调试信息
+
             // 从 Redis 获取最新市场价格
             $market_data = Cache::store('redis')->get('swap:XAUT_detail');
             if (!$market_data) {
+                if ($should_debug) echo "[定时器] 5分钟K线: 市场价格不存在\n";
                 return;
             }
 
@@ -119,13 +124,24 @@ $worker->onWorkerStart = function ($worker) {
             }
 
             if (!$kline_book || empty($kline_book)) {
+                if ($should_debug) echo "[定时器] 5分钟K线: K线缓存为空\n";
                 return;
             }
 
             // 获取当前这根K线
             $current_kline = end($kline_book);
-            $period_seconds = $ok->periods[$ok->period]['seconds'];
+            $period_seconds = 300; // 5分钟 = 300秒
             $current_timestamp = floor(time() / $period_seconds) * $period_seconds;
+
+            if ($should_debug) {
+                echo "[定时器调试] 5分钟K线:\n";
+                echo "  - 当前时间: " . date('H:i:s', time()) . " (" . time() . ")\n";
+                echo "  - 计算的时间戳: " . date('H:i:s', $current_timestamp) . " (" . $current_timestamp . ")\n";
+                echo "  - 缓存K线ID: " . date('H:i:s', $current_kline['id']) . " (" . $current_kline['id'] . ")\n";
+                echo "  - 时间戳匹配: " . ($current_kline['id'] == $current_timestamp ? '是' : '否') . "\n";
+                echo "  - 市场价: " . $market_data['close'] . "\n";
+                echo "  - K线close: " . $current_kline['close'] . "\n";
+            }
 
             // 只更新当前这根K线
             if ($current_kline['id'] == $current_timestamp) {
@@ -157,6 +173,13 @@ $worker->onWorkerStart = function ($worker) {
                         'sub' => $group_id,
                         'type' => 'dynamic'
                     ]));
+
+                    if ($should_debug) echo "[定时器] 5分钟K线: 推送成功\n";
+                }
+            } else {
+                if ($should_debug) {
+                    echo "[定时器警告] 5分钟K线: 时间戳不匹配，跳过更新\n";
+                    echo "  差值: " . ($current_timestamp - $current_kline['id']) . " 秒\n";
                 }
             }
         } catch (\Exception $e) {
