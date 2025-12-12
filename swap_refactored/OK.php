@@ -31,11 +31,13 @@ class OK
 
     public function __construct($period, $symbol, $is_k = true, $isget = true)
     {
-        if ($isget) {
-            $this->period = $period;
-            $this->symbol = $symbol;
-            $this->is_k = $is_k;
+        // 始终设置基本属性，无论是否拉取历史数据
+        $this->period = $period;
+        $this->symbol = $symbol;
+        $this->is_k = $is_k;
 
+        // 如果需要拉取历史数据
+        if ($isget) {
             // 拉取所有周期的历史数据
             foreach ($this->periods as $k => $v) {
                 $this->getHistory($k);
