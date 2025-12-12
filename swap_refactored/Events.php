@@ -1,261 +1,543 @@
 <?php
-/**
- * Gateway Events 事件处理类
- *
- * 处理客户端的连接、消息、断开等事件
- */
 
-use \GatewayWorker\Lib\Gateway;
-use \Workerman\Lib\Timer;
+
+namespace App\Workerman\Swap;
+
+use App\Models\Coins;
+use Carbon\Carbon;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
+use \Workerman\Lib\Timer;
+use GatewayWorker\Lib\Gateway;
 
 class Events
 {
-    /**
-     * 存储客户端的心跳信息
-     * 格式: [client_id => last_pong_time]
-     */
-    private static $heartbeats = [];
+    const MAX_PACKAGE = 256;
 
-    /**
-     * 当客户端连接时触发
-     */
-    public static function onConnect($client_id)
+    public static function onWorkerStart($businessWorker)
     {
-        echo "[连接] 客户端 $client_id 已连接\n";
-
-        // 初始化心跳时间
-        self::$heartbeats[$client_id] = time();
-    }
-
-    /**
-     * 当客户端发送数据时触发
-     *
-     * @param int $client_id 客户端ID
-     * @param mixed $message 客户端发送的数据
-     */
-    public static function onMessage($client_id, $message)
-    {
-        try {
-            // 尝试解析 JSON 数据
-            $data = json_decode($message, true);
-
-            if (!$data || !isset($data['cmd'])) {
-                // 不是合法的 JSON 或没有 cmd 字段，忽略
-                return;
-            }
-
-            // 处理心跳 pong 回复
-            if ($data['cmd'] === 'pong') {
-                echo "[心跳] 收到客户端 $client_id 的 pong\n";
-
-                // 更新该客户端的最后心跳时间
-                self::$heartbeats[$client_id] = time();
-
-                return;
-            }
-
-            // 处理订阅请求
-            if ($data['cmd'] === 'subscribe' && isset($data['channel'])) {
-                $channel = $data['channel'];
-
-                echo "[订阅] 客户端 $client_id 订阅频道: $channel\n";
-
-                // 将客户端加入对应的分组
-                Gateway::joinGroup($client_id, $channel);
-
-                // 发送订阅成功确认
-                Gateway::sendToClient($client_id, json_encode([
-                    'cmd' => 'subscribed',
-                    'channel' => $channel,
-                    'timestamp' => time()
-                ]));
-
-                return;
-            }
-
-            // 处理取消订阅请求
-            if ($data['cmd'] === 'unsubscribe' && isset($data['channel'])) {
-                $channel = $data['channel'];
-
-                echo "[取消订阅] 客户端 $client_id 取消订阅频道: $channel\n";
-
-                // 将客户端从分组中移除
-                Gateway::leaveGroup($client_id, $channel);
-
-                // 发送取消订阅确认
-                Gateway::sendToClient($client_id, json_encode([
-                    'cmd' => 'unsubscribed',
-                    'channel' => $channel,
-                    'timestamp' => time()
-                ]));
-
-                return;
-            }
-
-            // 其他未识别的命令
-            echo "[未知命令] 客户端 $client_id 发送: {$data['cmd']}\n";
-
-        } catch (\Exception $e) {
-            echo "[异常] 处理客户端 $client_id 消息时出错: " . $e->getMessage() . "\n";
-        }
-    }
-
-    /**
-     * 当客户端断开连接时触发
-     */
-    public static function onClose($client_id)
-    {
-        echo "[断开] 客户端 $client_id 已断开\n";
-
-        // 清理心跳记录
-        if (isset(self::$heartbeats[$client_id])) {
-            unset(self::$heartbeats[$client_id]);
-        }
-    }
-
-    /**
-     * 当 Worker 启动时触发
-     */
-    public static function onWorkerStart($worker)
-    {
-        echo "[启动] Gateway Worker #{$worker->id} 已启动\n";
-
-        // 只在第一个 Worker 进程中启动心跳定时器，避免重复
-        if ($worker->id === 0) {
-            // 每 20 秒向所有客户端发送一次 ping
-            Timer::add(20, function() {
-                $client_list = Gateway::getAllClientIdList();
-
-                if (empty($client_list)) {
-                    return;
-                }
-
-                $now = time();
-                $timeout = 60; // 60秒未收到pong则判定为超时
-
-                foreach ($client_list as $client_id) {
-                    // 检查心跳超时
-                    if (isset(self::$heartbeats[$client_id])) {
-                        $last_pong_time = self::$heartbeats[$client_id];
-
-                        // 如果超过60秒未收到pong，断开连接
-                        if ($now - $last_pong_time > $timeout) {
-                            echo "[心跳超时] 客户端 $client_id 超时，断开连接\n";
-                            Gateway::closeClient($client_id);
-                            unset(self::$heartbeats[$client_id]);
-                            continue;
-                        }
-                    }
-
-                    // 发送 ping
-                    try {
-                        Gateway::sendToClient($client_id, json_encode([
-                            'cmd' => 'ping',
-                            'timestamp' => $now
-                        ]));
-                        echo "[心跳] 向客户端 $client_id 发送 ping\n";
-                    } catch (\Exception $e) {
-                        echo "[心跳错误] 向客户端 $client_id 发送 ping 失败: " . $e->getMessage() . "\n";
-                    }
-                }
+        // 拿到当前进程的id编号.
+        $workid = $businessWorker->id;
+        echo 'workid--' . $workid . "\r\n";
+        if ($workid == 0) {
+            Timer::add(1, function () {
+                $data = Events::getMarketList();
+                $group_id = 'swapMarketList';
+                $message3 = json_encode(['code' => 0, 'msg' => 'success', 'data' => $data, 'sub' => $group_id]);
+                if (Gateway::getClientIdCountByGroup($group_id) > 0) Gateway::sendToGroup($group_id, $message3);
             });
 
-            echo "[心跳] 心跳定时器已启动，每 20 秒发送一次 ping\n";
+            // COIN_SYMBOL -- START
+            $coins = config('coin.swap_symbols');
+            $seconds = 3;
+            foreach ($coins as $coin1 => $class) {
 
-            // ========== 添加市场列表推送定时器 ==========
-            // 每 1 秒推送一次市场列表数据
-            Timer::add(1, function() {
-                try {
-                    $market_data = self::getMarketList();
 
-                    if (empty($market_data)) {
-                        return;
-                    }
+                Timer::add($seconds, function ($coin1, $class) {
 
-                    $group_id = 'swapMarketList';
+                    $symbol = $coin1;
+                    $group_id = 'swapBuyList_' . $symbol;
 
-                    // 检查是否有客户端订阅了这个频道
                     if (Gateway::getClientIdCountByGroup($group_id) > 0) {
-                        $message = json_encode([
-                            'code' => 0,
-                            'msg' => 'success',
-                            'data' => $market_data,
-                            'sub' => $group_id
-                        ]);
-
+                        $data = Events::getCoinBuyList($symbol, $class);
+                        info("返回参数", $data);
+                        $message = json_encode(['code' => 0, 'msg' => 'success', 'data' => $data, 'sub' => $group_id]);
                         Gateway::sendToGroup($group_id, $message);
                     }
-                } catch (\Exception $e) {
-                    echo "[市场列表异常] " . $e->getMessage() . "\n";
+                }, [$coin1, $class]);
+
+                if ($coin1 != strtolower(config('coin.coin_symbol'))) {
+
+
+                    file_put_contents('22222---Events.php.log', json_encode($coin1) . "\n\n", FILE_APPEND);
+
+
+                    Timer::add($seconds, function ($coin1, $class) {
+
+                        file_put_contents('3333---Events.php.log', json_encode($class) . "\n\n", FILE_APPEND);
+
+
+                        $symbol = $coin1;
+                        $group_id = 'swapSellList_' . $symbol;
+
+                        if (Gateway::getClientIdCountByGroup($group_id) > 0) {
+                            $data = Events::getCoinBuyList($symbol, $class);
+
+
+                            file_put_contents('1111111---Events.php.log', json_encode($data) . "\n\n", FILE_APPEND);
+
+
+                            $message = json_encode(['code' => 0, 'msg' => 'success', 'data' => $data, 'sub' => $group_id]);
+                            Gateway::sendToGroup($group_id, $message);
+                        }
+                    }, [$coin1, $class]);
                 }
+                Timer::add($seconds, function ($coin1, $class) {
+                    $symbol = $coin1;
+                    $group_id = 'swapTradeList_' . $symbol;
+                    if (Gateway::getClientIdCountByGroup($group_id) > 0) {
+                        $data = Events::getCoinTradeItem($symbol, $class);
+                        $message = json_encode(['code' => 0, 'msg' => 'success', 'type' => 'dynamic', 'data' => $data, 'sub' => $group_id]);
+                        Gateway::sendToGroup($group_id, $message);
+                    }
+                }, [$coin1, $class]);
+
+                $periods = ['1min', '5min', '15min', '30min', '60min', '1day', '1week', '1mon'];
+                Timer::add($seconds, function ($periods, $coin1, $class) {
+                    $symbol = $coin1;
+                    foreach ($periods as $period) {
+                        $data = Events::getCoinKline($symbol, $period, $class);
+
+
+                        file_put_contents('2111111111-11111.log',$symbol.'----'.$period."\n", FILE_APPEND);
+//                        file_put_contents('1111111111-11111.log',json_encode($data)."\n", FILE_APPEND);
+
+
+                        Cache::store('redis')->put('swap:' . $symbol . '_kline_' . $period, $data);
+
+                        $group_id = 'swapKline_' . $symbol . '_' . $period;
+                        if (Gateway::getClientIdCountByGroup($group_id) > 0) {
+
+                            file_put_contents('aaaaaaaaa-11111.log',$group_id."\n", FILE_APPEND);
+                            $message = json_encode(['code' => 0, 'msg' => 'success', 'data' => $data, 'sub' => $group_id, 'type' => 'dynamic']);
+                            Gateway::sendToGroup($group_id, $message);
+                        }
+
+                    }
+                }, [$periods, $coin1, $class]);
+
+                Timer::add(2, function ($coin1, $class) {
+                    $coin1_symbol = $coin1;
+                    $kline = $class::query()->where('Date', '<', time())->where('is_1min', 1)->orderByDesc('Date')->first();
+                    $day_kline = $class::query()->where('Date', Carbon::yesterday()->getTimestamp())->where('is_day', 1)->orderByDesc('Date')->first();
+                    if (blank($kline)) {
+                        $cache_data = [];
+                        return;
+                    } else {
+                        $decimal = 100000;
+                        $ups_downs_high = 20;            //高
+                        $ups_downs_low = 1;              //低
+                        $up_or_down = mt_rand(1, 5);
+                        $flag2 = mt_rand(1, 2);
+                        $cache_data = [
+                            "id" => $kline['Date'],
+                            "count" => $day_kline['Amount'],
+                            "open" => $kline['Open'],
+                            "low" => $kline['Low'],
+                            "high" => $kline['High'],
+                            "vol" => $day_kline['Volume'],
+                            "version" => $kline['Date'],
+                            'ts' => \Carbon\Carbon::now()->getPreciseTimestamp(3),
+                        ];
+                        $cache_data['amount'] = $flag2 == 1 ? round($day_kline['Amount'] + (mt_rand(10, 40) / 100000), 5) : round($day_kline['Amount'] - (mt_rand(10, 40) / 100000), 5);
+                        $decimal_price = $kline['Close'] * $decimal;
+                        if ($up_or_down <= 3) {
+                            $cache_data['close'] = mt_rand($decimal_price, $decimal_price + mt_rand($ups_downs_low, $ups_downs_high)) / $decimal;
+                        } else {
+                            $cache_data['close'] = mt_rand($decimal_price - mt_rand($ups_downs_low, $ups_downs_high), $decimal_price) / $decimal;
+                        }
+                        $cache_data['price'] = $cache_data['close'];
+                        if (isset($cache_data['open']) && $cache_data['open'] != 0) {
+                            if (blank($day_kline)) {
+                                if (($cache_data['close'] - $cache_data['open']) == 0) {
+                                    $increase = 0;
+                                } else {
+                                    $increase = round(($cache_data['close'] - $cache_data['open']) / $cache_data['open'], 4);
+                                }
+                            } else {
+                                if (($cache_data['close'] - $day_kline['Close']) == 0) {
+                                    $increase = 0;
+                                } else {
+                                    $increase = round(($cache_data['close'] - $day_kline['Close']) / $day_kline['Close'], 4);
+                                }
+                            }
+                        } else {
+                            $increase = 0;
+                        }
+                        $cache_data['increase'] = $increase;
+                        $flag = $increase >= 0 ? '+' : '';
+                        $cache_data['increaseStr'] = $increase == 0 ? '+0.00%' : $flag . $increase * 100 . '%';
+                    }
+                    $cache_data2 = [
+                        "id" => Str::uuid()->toString(),
+                        "ts" => $cache_data['ts'],
+                        "tradeId" => Str::uuid()->toString(),
+                        "amount" => $cache_data['amount'],
+                        "price" => $cache_data['price'],
+                        // "direction"=> "buy",
+                        'direction' => mt_rand(0, 1) == 0 ? 'buy' : 'sell',
+                        "increase" => $cache_data['increase'],
+                        "increaseStr" => $cache_data['increaseStr']
+                    ];
+
+                    // 历史价格数据book
+                    //                    $new_price_book_key = 'swap:' . $coin1_symbol . '_newPriceBook';
+                    $new_price_book_key = 'swap:tradeList_' . $coin1_symbol;
+                    $new_price_book = Cache::store('redis')->get($new_price_book_key);
+                    if (blank($new_price_book)) {
+                        $prices = [];
+                    } else {
+                        $size = count($new_price_book) >= 10 ? 10 : count($new_price_book);
+                        $prices = array_random($new_price_book, $size);
+                        $prices = array_values(Arr::sort($prices, function ($value) {
+                            return $value['ts'];
+                        }));
+                        $prices = Arr::pluck($prices, 'price');
+                    }
+                    $cache_data['prices'] = $prices;
+
+                    Cache::store('redis')->put('swap:' . $coin1_symbol . '_detail', $cache_data);
+                    if (!blank($cache_data2)) {
+                        Cache::store('redis')->put('swap:trade_detail_' . $coin1_symbol, $cache_data);
+
+                        //缓存历史价格数据book
+                        if (blank($new_price_book)) {
+                            Cache::store('redis')->put($new_price_book_key, [$cache_data2]);
+                        } else {
+                            array_push($new_price_book, $cache_data2);
+                            if (count($new_price_book) > 200) {
+                                array_shift($new_price_book);
+                            }
+                            Cache::store('redis')->put($new_price_book_key, $new_price_book);
+                        }
+                    }
+                }, [$coin1, $class]);
+            }
+            // COIN_SYMBOL -- END
+        }
+    }
+
+    public static function onWorkerStop($businessWorker)
+    {
+        // 拿到当前进程的id编号.
+        $workid = $businessWorker->id;
+        if ($workid == 0) {
+            Timer::delAll();
+        }
+    }
+
+    public static function onConnect($client_id)
+    {
+    }
+
+    public static function getMarketList($type = 'marketList')
+    {
+        $marketList = [];
+        $symbols = \App\Models\ContractPair::query()->where('status', 1)->pluck('symbol',"id");
+
+        $kk = 0;
+        $kk2 = 0;
+        foreach ($symbols as $k => $symbol) {
+
+
+//            file_put_contents('111---222344.log',date('Y-m-d H:i:s',time())."\n".$symbol."\n\n", FILE_APPEND);
+
+
+            $coin = array_first(Coins::getCachedCoins(), function ($value, $key) {
+                return $value['coin_name'] == 'USDT';
             });
 
-            echo "[市场列表] 市场列表推送定时器已启动，每 1 秒推送一次\n";
-        }
-    }
+            $marketList[$kk]['coin_name'] = $coin['coin_name'];
+            $marketList[$kk]['full_name'] = $coin['full_name'];
 
-    /**
-     * 获取市场列表数据
-     * 从 Redis 读取已应用差值的数据
-     */
-    private static function getMarketList()
-    {
-        $result = [];
+            $marketList[$kk]['coin_icon'] = getFullPath($coin['coin_icon']);
+            $marketList[$kk]['coin_content'] = $coin['coin_content'];
+            $marketList[$kk]['qty_decimals'] = $coin['qty_decimals'];
+            $marketList[$kk]['price_decimals'] = $coin['price_decimals'];
+            $cd = Cache::store('redis')->get('swap:' . $symbol . '_detail');
+            $data = $cd;
 
-        // 只处理 XAUT
-        $symbol = 'XAUT';
 
-        try {
-            // 从 Redis 读取调整后的市场数据（已包含 FOREX 差值）
-            $detail = Cache::store('redis')->get('swap:' . $symbol . '_detail');
-
-            if (!$detail) {
-                echo "[市场列表] swap:{$symbol}_detail 数据不存在\n";
-                return $result;
+            $data['price'] = $cd['close'];
+            $data['symbol'] = $symbol;
+            $data['pair_name'] = $symbol . '/' . 'USDT';
+            $data['type'] = 'USDT';
+            $data['coin_icon'] = getFullPath(Coins::icon($symbol));
+            $data['coin_id'] = $k;
+            // 合约列表中增加日线（压缩） （只显示6条数据）
+            try {
+                $kline = Cache::store('redis')->get('swap:' . $symbol . '_kline_book_1day');
+                $data_count = @count($kline);
+                $step = bcdiv($data_count, 6, 8);
+                $new_data = [];
+                for ($i = 0; ($i * $step) < $data_count; $i++) {
+                    $new_data[] = $kline[intval($i * $step)]['close'] ?? 0;
+                }
+                $kline_base = bcdiv(@max($new_data), 100, 8);
+                $kline = [];
+                if (!blank($kline_base) && $kline_base != 0) {
+                    for ($i = 0; $i < 6; $i++) {
+                        $kline[] = bcdiv($new_data[$i], $kline_base, 0);
+                    }
+                }
+                $data['series'][] = [
+                    'data' => $kline,
+                    'color' => ($cd['increase'] < 0) ? '#ea3131' : '#60c08c',
+                ];
+            } catch (\Exception $e) {
+                info($e);
+                $data['series'][]['data'] = [];
             }
 
-            // 读取1天K线数据用于计算24小时涨跌
-            $kline_1day = Cache::store('redis')->get('swap:' . $symbol . '_kline_book_1day');
 
-            // 组装市场列表数据
-            $item = [
-                'symbol' => $symbol,
-                'close' => round(floatval($detail['close']), 2),  // 当前价（已含差值）
-                'open' => round(floatval($detail['open']), 2),
-                'high' => round(floatval($detail['high']), 2),
-                'low' => round(floatval($detail['low']), 2),
-                'vol' => round(floatval($detail['vol']), 2),
-                'amount' => round(floatval($detail['amount']), 2),
-                'increase' => isset($detail['increase']) ? round(floatval($detail['increase']), 4) : 0,
-                'increaseStr' => isset($detail['increaseStr']) ? $detail['increaseStr'] : '0.00%',
-                'timestamp' => isset($detail['timestamp']) ? intval($detail['timestamp']) : time(),
+            $marketList[$kk]['marketInfoList'][$kk2] = $data;
+            $kk2++;
+        }
+        return $marketList;
+    }
+
+    public static function getTickerList()
+    {
+        $ticker = [];
+        $symbols = \App\Models\ContractPair::query()->where('status', 1)->pluck('symbol');
+        $kk = 0;
+        foreach ($symbols as $symbol) { //根据
+            $coin = array_first(Coins::getCachedCoins(), function ($value, $key) {
+                return $value['coin_name'] == 'USDT';
+            });
+            if (blank($coin)) return; //如果不存在交易货币则返回空值
+            $cd = Cache::store('redis')->get('swap:' . $symbol . '_detail'); //从redis中获取ticker数据
+            $cd['symbol'] = $symbol;
+            $cd['anchor'] = 'USDT';
+            $ticker[$kk] = $cd;
+            $kk++;
+        }
+        return $ticker;
+    }
+
+    public static function getCoinKline($symbol, $period, $class)
+    {
+        $periods = [
+            '1min' => 60,
+            '5min' => 300,
+            '15min' => 900,
+            '30min' => 1800,
+            '60min' => 3600,
+            '1day' => 86400,
+            '1week' => 604800,
+            '1mon' => 2592000,
+        ];
+        $wheres = [
+            '1min' => 'is_1min',
+            '5min' => 'is_5min',
+            '15min' => 'is_15min',
+            '30min' => 'is_30min',
+            '60min' => 'is_1h',
+            '1day' => 'is_day',
+            '1week' => 'is_week',
+            '1mon' => 'is_month',
+        ];
+        $seconds = $periods[$period] ?? 60;
+        $where = $wheres[$period] ?? 'is_1min';
+        $kline = $class::query()->where($where, 1)->where('Date', '>', (time() - $seconds))->where('Date', '<=', time())->first();
+        $kline_cache_data = Cache::store('redis')->get('swap:' . $symbol . '_detail');
+
+
+        if ($kline['Date'] == time()) {
+            $cache_data = [
+                "id" => $kline['Date'],
+                "amount" => $kline['Amount'],
+                "count" => mt_rand(10, 55),
+                "open" => $kline['Open'],
+                "close" => $kline['Close'],
+                "low" => $kline['Low'],
+                "high" => $kline['High'],
+                "vol" => $kline['Volume']
             ];
-
-            // 如果有1天K线数据，添加图表数据
-            if ($kline_1day && is_array($kline_1day)) {
-                $item['chart'] = array_map(function($k) {
-                    return [
-                        'id' => $k['id'],
-                        'close' => round(floatval($k['close']), 2),
-                    ];
-                }, array_slice($kline_1day, -24)); // 最近24条
-            }
-
-            $result[] = $item;
-
-        } catch (\Exception $e) {
-            echo "[市场列表异常] 处理 {$symbol} 时出错: " . $e->getMessage() . "\n";
+            $cache_data['price'] = $cache_data['close'];
+        } else {
+            $cache_data = [
+                "id" => $kline['Date'],
+                "amount" => round($kline['Amount'] + (mt_rand(10, 99) / 10000), 5),
+                "count" => mt_rand(10, 55),
+                "open" => $kline['Open'],
+                "close" => $kline_cache_data['close'],
+                "low" => $kline['Low'],
+                "high" => $kline['High'],
+                "vol" => $kline['Volume']
+            ];
+            $cache_data['price'] = $cache_data['close'];
         }
 
-        return $result;
+        return $cache_data;
     }
 
-    /**
-     * 当 Worker 停止时触发
-     */
-    public static function onWorkerStop($worker)
+    public static function getCoinBuyList($symbol, $class)
     {
-        echo "[停止] Gateway Worker #{$worker->id} 已停止\n";
+
+        $kline = $class::query()->where('is_1min', 1)->where('Date', '<', time())->orderByDesc('Date')->first();
+        if (blank($kline)) return [];
+        $kline_cache_data = Cache::store('redis')->get('swap:' . $symbol . '_detail');
+        $buyList = [];
+
+        for ($i = 0; $i <= 19; $i++) {
+            if ($i == 0) {
+                $buyList[$i] = [
+                    'id' => Str::uuid(),
+                    "amount" => round((mt_rand(10000, 3000000) / 1000), 4),
+                    'price' => $kline_cache_data['close'],
+                ];
+            } else {
+                $open = $kline['Open'];
+                $close = $kline['Close'];
+                $min = min($open, $close) * 100000;
+                $max = max($open, $close) * 100000;
+                $price = round(mt_rand($min, $max) / 100000, 5);
+
+                $buyList[$i] = [
+                    'id' => Str::uuid()->toString(),
+                    "amount" => round((mt_rand(10000, 3000000) / 1000), 4),
+                    'price' => $price,
+                ];
+            }
+        }
+        return $buyList;
+    }
+
+    public static function getCoinTradeList($symbol, $class)
+    {
+        $kline = $class::query()->where('is_1min', 1)->where('Date', '<', time())->orderByDesc('Date')->first();
+        if (blank($kline)) return [];
+        $kline_cache_data = Cache::store('redis')->get('swap:' . $symbol . '_detail');
+        $tradeList = [];
+
+        for ($i = 0; $i <= 30; $i++) {
+            if ($i == 0) {
+                $tradeList[$i] = [
+                    'id' => Str::uuid(),
+                    "amount" => round((mt_rand(10000, 3000000) / 1000), 4),
+                    'price' => $kline_cache_data['close'],
+                    'tradeId' => Str::uuid()->toString(),
+                    'ts' => Carbon::now()->getPreciseTimestamp(3),
+                    'increase' => -0.1626,
+                    'increaseStr' => "-16.26%",
+                    'direction' => mt_rand(0, 1) == 0 ? 'buy' : 'sell',
+                ];
+            } else {
+                $open = $kline['Open'];
+                $close = $kline['Close'];
+                $min = min($open, $close) * 100000;
+                $max = max($open, $close) * 100000;
+                $price = round(mt_rand($min, $max) / 100000, 5);
+
+                $tradeList[$i] = [
+                    'id' => Str::uuid()->toString(),
+                    "amount" => round((mt_rand(10000, 3000000) / 1000), 4),
+                    'price' => $price,
+                    'tradeId' => Str::uuid()->toString(),
+                    'ts' => Carbon::now()->getPreciseTimestamp(3),
+                    'increase' => -0.1626,
+                    'increaseStr' => "-16.26%",
+                    'direction' => mt_rand(0, 1) == 0 ? 'buy' : 'sell',
+                ];
+            }
+        }
+        return $tradeList;
+    }
+
+    public static function getNewPrice($symbol)
+    {
+        $key = 'swap:' . $symbol . '_newPrice';
+        $data = Cache::store('redis')->get($key);
+        $data['ts'] = Carbon::now()->getPreciseTimestamp(3);
+
+
+        if ($key == 'swap:xautusdt_newPrice') {
+            $data['price'] = 4000;
+        }
+
+
+        return $data;
+    }
+
+    public static function getCoinTradeItem($symbol, $class = null)
+    {
+        $kline_cache_data = Cache::store('redis')->get('swap:' . $symbol . '_detail');
+        $tradeItem = [
+            'id' => Str::uuid()->toString(),
+            "amount" => round((mt_rand(10000, 3000000) / 1000), 4),
+            'price' => $kline_cache_data['close'],
+            'tradeId' => Str::uuid()->toString(),
+            'ts' => Carbon::now()->getPreciseTimestamp(3),
+            'increase' => 0,
+            'increaseStr' => "--",
+            'direction' => mt_rand(0, 1) == 0 ? 'buy' : 'sell',
+        ];
+        if($symbol =='gdusdt'){
+            $tradeItem = [];
+        }
+        return $tradeItem;
+    }
+
+    public static function onWebSocketConnect($client_id, $data)
+    {
+        echo "onWebSocketConnect\r\n";
+    }
+
+    public static function onMessage($client_id, $message)
+    {
+        echo $message . ':' . $client_id . "--onMessage\r\n";
+        $message = json_decode($message);
+
+        if (isset($message->cmd)) {
+            switch ($message->cmd) {
+                case 'pong':
+                    Gateway::sendToClient($client_id, json_encode(['code' => 0, 'msg' => 'success']));
+                    break;
+                case 'sub':
+                    $sub = $message->msg;
+                    $_SESSION['subs'][$sub] = $sub;
+                    Gateway::joinGroup($client_id, $sub);
+
+                    break;
+                case 'unsub':
+                    $sub = $message->msg;
+
+                    if (array_get($_SESSION['subs'], $sub)) {
+                        array_forget($_SESSION['subs'], $sub);
+                        Gateway::leaveGroup($client_id, $sub);
+                    }
+
+                    break;
+                case 'req':
+                    $ch = $message->msg;
+                    $type = str_before($ch, '_');
+                    if ($type == 'swapTradeList') {
+                        $params = str_after($ch, '_');
+                        $symbol = str_before($params, '_');
+                        // 火币最新成交明细缓存
+                        $new_price_book_key = 'swap:' . 'tradeList_' . $symbol;
+                        $new_price_book = Cache::store('redis')->get($new_price_book_key);
+                        if (blank($new_price_book)) $new_price_book = [];
+                        Gateway::sendToClient($client_id, json_encode(['code' => 0, 'msg' => 'success', 'data' => $new_price_book, 'sub' => $ch, 'type' => 'history', 'client_id' => $client_id]));
+                    } elseif ($type == 'swapKline') {
+                        $params = str_after($ch, '_');
+                        $symbol = str_before($params, '_');
+                        $period = str_after($params, '_');
+
+
+                        if (blank($symbol) || blank($period)) {
+                            Gateway::sendToClient($client_id, json_encode(['code' => -1, 'msg' => 'params error', 'client_id' => $client_id]));
+                            break;
+                        }
+
+                        $kline_book_key = 'swap:' . $symbol . '_kline_book_' . $period;
+                        $kline_book = Cache::store('redis')->get($kline_book_key);
+                        if (blank($kline_book)) $kline_book = [];
+                        Gateway::sendToClient($client_id, json_encode(['code' => 0, 'msg' => 'success', 'data' => $kline_book, 'sub' => $ch, 'type' => 'history', 'client_id' => $client_id]));
+                    }
+
+                    break;
+            }
+        }
+        return true;
+    }
+
+    public static function onClose($client_id)
+    {
+        if (isset($_SESSION['time_id'])) {
+            Timer::del($_SESSION['time_id']);
+        }
     }
 }
