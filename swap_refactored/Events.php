@@ -29,6 +29,22 @@ class Events
     }
 
     /**
+     * 当 WebSocket 握手完成时触发
+     * 这个方法在 onConnect 之后触发，表示 WebSocket 连接已经完全建立
+     */
+    public static function onWebSocketConnect($client_id, $data)
+    {
+        echo "[WebSocket握手完成] 客户端 $client_id 可以开始通信\n";
+
+        // 发送欢迎消息，告知客户端可以开始订阅
+        Gateway::sendToClient($client_id, json_encode([
+            'cmd' => 'welcome',
+            'msg' => 'WebSocket connected successfully',
+            'timestamp' => time()
+        ]));
+    }
+
+    /**
      * 当客户端发送数据时触发
      *
      * @param int $client_id 客户端ID
