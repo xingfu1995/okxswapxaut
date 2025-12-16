@@ -93,6 +93,92 @@ class Events
                 return;
             }
 
+            // 处理历史数据请求 (req 命令)
+            // 支持两种格式: {"cmd": "req", "channel": "..."} 和 {"cmd": "req", "msg": "..."}
+            if ($data['cmd'] === 'req' && (isset($data['channel']) || isset($data['msg']))) {
+                $channel = $data['channel'] ?? $data['msg'];
+
+                echo "[历史数据请求] 客户端 $client_id 请求频道: $channel\n";
+
+                // 解析频道名称，提取类型、币种、周期
+                // 格式: swapKline_XAUT_1min 或 swapTradeList_XAUT
+                $parts = explode('_', $channel);
+                $type = $parts[0] ?? '';
+
+                if ($type === 'swapKline' && count($parts) >= 3) {
+                    // K线历史数据
+                    $symbol = $parts[1];
+                    $period = $parts[2];
+
+                    $kline_book_key = 'swap:' . $symbol . '_kline_book_' . $period;
+                    $kline_book = Cache::store('redis')->get($kline_book_key);
+
+                    if (empty($kline_book)) {
+                        $kline_book = [];
+                    }
+
+                    echo "[历史数据] 发送 K线数据: {$kline_book_key}, 数量: " . count($kline_book) . "\n";
+
+                    Gateway::sendToClient($client_id, json_encode([
+                        'code' => 0,
+                        'msg' => 'success',
+                        'data' => $kline_book,
+                        'sub' => $channel,
+                        'type' => 'history',
+                        'client_id' => $client_id
+                    ]));
+
+                } elseif ($type === 'swapTradeList' && count($parts) >= 2) {
+                    // 成交明细历史数据
+                    $symbol = $parts[1];
+
+                    $trade_list_key = 'swap:tradeList_' . $symbol;
+                    $trade_list = Cache::store('redis')->get($trade_list_key);
+
+                    if (empty($trade_list)) {
+                        $trade_list = [];
+                    }
+
+                    echo "[历史数据] 发送交易列表: {$trade_list_key}, 数量: " . count($trade_list) . "\n";
+
+                    Gateway::sendToClient($client_id, json_encode([
+                        'code' => 0,
+                        'msg' => 'success',
+                        'data' => $trade_list,
+                        'sub' => $channel,
+                        'type' => 'history',
+                        'client_id' => $client_id
+                    ]));
+
+                } else {
+                    echo "[历史数据] 未知的频道格式: $channel\n";
+
+                    Gateway::sendToClient($client_id, json_encode([
+                        'code' => -1,
+                        'msg' => 'Invalid channel format',
+                        'client_id' => $client_id
+                    ]));
+                }
+
+                return;
+            }
+
+            // 兼容旧协议: {"cmd": "sub", "msg": "channel_name"}
+            if ($data['cmd'] === 'sub' && isset($data['msg'])) {
+                $channel = $data['msg'];
+
+                echo "[订阅-旧协议] 客户端 $client_id 订阅频道: $channel\n";
+
+                Gateway::joinGroup($client_id, $channel);
+
+                Gateway::sendToClient($client_id, json_encode([
+                    'code' => 0,
+                    'msg' => 'success'
+                ]));
+
+                return;
+            }
+
             // 其他未识别的命令
             echo "[未知命令] 客户端 $client_id 发送: {$data['cmd']}\n";
 
