@@ -37,13 +37,19 @@ class Events
     public static function onMessage($client_id, $message)
     {
         try {
+            // 记录原始消息
+            echo "[收到消息] 客户端 $client_id: $message\n";
+
             // 尝试解析 JSON 数据
             $data = json_decode($message, true);
 
             if (!$data || !isset($data['cmd'])) {
                 // 不是合法的 JSON 或没有 cmd 字段，忽略
+                echo "[消息解析失败] 客户端 $client_id: 非法 JSON 或缺少 cmd 字段\n";
                 return;
             }
+
+            echo "[命令] 客户端 $client_id 发送命令: {$data['cmd']}\n";
 
             // 处理心跳 pong 回复
             if ($data['cmd'] === 'pong') {
@@ -170,11 +176,16 @@ class Events
                 echo "[订阅-旧协议] 客户端 $client_id 订阅频道: $channel\n";
 
                 Gateway::joinGroup($client_id, $channel);
+                echo "[订阅成功] 客户端 $client_id 已加入分组: $channel\n";
 
-                Gateway::sendToClient($client_id, json_encode([
+                $response = json_encode([
                     'code' => 0,
-                    'msg' => 'success'
-                ]));
+                    'msg' => 'success',
+                    'channel' => $channel
+                ]);
+
+                echo "[发送响应] 给客户端 $client_id: $response\n";
+                Gateway::sendToClient($client_id, $response);
 
                 return;
             }
