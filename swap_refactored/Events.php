@@ -31,17 +31,14 @@ class Events
     /**
      * 当 WebSocket 握手完成时触发
      * 这个方法在 onConnect 之后触发，表示 WebSocket 连接已经完全建立
+     * 注意：客户端是打包好的应用，连接后会立即发送订阅消息，无法修改
      */
     public static function onWebSocketConnect($client_id, $data)
     {
-        echo "[WebSocket握手完成] 客户端 $client_id 可以开始通信\n";
+        echo "[WebSocket握手完成] 客户端 $client_id 握手完成，可以接收消息了\n";
 
-        // 发送欢迎消息，告知客户端可以开始订阅
-        Gateway::sendToClient($client_id, json_encode([
-            'cmd' => 'welcome',
-            'msg' => 'WebSocket connected successfully',
-            'timestamp' => time()
-        ]));
+        // 客户端可能在握手完成前就发送了订阅消息
+        // 不发送 welcome，让客户端自由发送
     }
 
     /**
@@ -53,15 +50,25 @@ class Events
     public static function onMessage($client_id, $message)
     {
         try {
-            // 记录原始消息
-            echo "[收到消息] 客户端 $client_id: $message\n";
+            // 记录原始消息（包括二进制数据的十六进制表示）
+            $message_preview = strlen($message) > 200 ? substr($message, 0, 200) . '...' : $message;
+            $message_length = strlen($message);
+            $message_type = is_string($message) ? 'string' : gettype($message);
+
+            echo "[收到消息] 客户端 $client_id\n";
+            echo "  类型: {$message_type}, 长度: {$message_length}\n";
+            echo "  内容: {$message_preview}\n";
 
             // 尝试解析 JSON 数据
             $data = json_decode($message, true);
+            $json_error = json_last_error();
 
             if (!$data || !isset($data['cmd'])) {
                 // 不是合法的 JSON 或没有 cmd 字段，忽略
-                echo "[消息解析失败] 客户端 $client_id: 非法 JSON 或缺少 cmd 字段\n";
+                echo "[消息解析失败] 客户端 $client_id\n";
+                echo "  JSON 错误码: {$json_error}\n";
+                echo "  JSON 错误信息: " . json_last_error_msg() . "\n";
+                echo "  解析结果: " . var_export($data, true) . "\n";
                 return;
             }
 
